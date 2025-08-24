@@ -1,2 +1,7 @@
 .DS_Store
 .pio
+README
+secrets.ini
+sdkconfig.*
+!sdkconfig.defaults
+managed_components/
