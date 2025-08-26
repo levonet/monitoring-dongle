@@ -8,11 +8,8 @@
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 #include "esp_system.h"
-#include "esp_log.h"
 #include "esp_err.h"
-
 
 #include "usb/usb_host.h"
 #include "usb/cdc_acm_host.h"
@@ -22,14 +19,11 @@
 
 CRGB leds;
 
-const char *networkSSID = CONFIG_ESP_WIFI_SSID;
-const char *networkPswd = CONFIG_ESP_WIFI_PASSWORD;
-
 PicoSyslog::Logger syslog("dongle");
 
 boolean isWiFiConnected = false;
 
-#define USB_HOST_PRIORITY (20)
+static cdc_acm_dev_hdl_t cdc_dev = NULL;
 
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg);
 static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx);
@@ -42,10 +36,6 @@ const cdc_acm_host_device_config_t dev_config = {
     .data_cb = handle_rx,
     .user_arg = NULL,
 };
-
-static cdc_acm_dev_hdl_t cdc_dev = NULL;
-static SemaphoreHandle_t device_disconnected_sem;
-
 
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
     char output[512];
@@ -63,9 +53,8 @@ static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_
             syslog.error.printf("USB: CDC-ACM error has occurred, err_no = %i\n", event->data.error);
             break;
         case CDC_ACM_HOST_DEVICE_DISCONNECTED:
-            syslog.information.printf("USB: Device suddenly disconnected\n");
+            syslog.warning.printf("USB: Device suddenly disconnected\n");
             ESP_ERROR_CHECK(cdc_acm_host_close(event->data.cdc_hdl));
-            xSemaphoreGive(device_disconnected_sem);
             break;
         case CDC_ACM_HOST_SERIAL_STATE:
             syslog.information.printf("USB: Serial state notif 0x%04X\n", event->data.serial_state.val);
@@ -78,22 +67,12 @@ static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_
 }
 
 void cdc_acm_device_event_cb(usb_device_handle_t dev_hdl) {
-
     syslog.information.printf("USB: Getting device information\n");
 
     usb_device_info_t dev_info;
     ESP_ERROR_CHECK(usb_host_device_info(dev_hdl, &dev_info));
     syslog.information.printf("USB:  Bus addr: %d\n", dev_info.dev_addr);
     syslog.information.printf("USB:  %s speed\n", (const char *[]) {"Low", "Full", "High"}[dev_info.speed]);
-    // syslog.information.printf("USB:  Parent info:\n");
-    // if (dev_info.parent.dev_hdl) {
-    //     usb_device_info_t parent_dev_info;
-    //     ESP_ERROR_CHECK(usb_host_device_info(dev_info.parent.dev_hdl, &parent_dev_info));
-    //     syslog.information.printf("USB:    Bus addr: %d\n", parent_dev_info.dev_addr);
-    //     syslog.information.printf("USB:    Port: %d\n", dev_info.parent.port_num);
-    // } else {
-    //     syslog.information.printf("USB:    Port: ROOT\n");
-    // }
     syslog.information.printf("USB:  bConfigurationValue %d\n", dev_info.bConfigurationValue);
     if (dev_info.str_desc_manufacturer) {
         char manufacturer[256];
@@ -129,8 +108,6 @@ static void usb_lib_task(void *arg) {
 }
 
 static void run_usb(void) {
-    device_disconnected_sem = xSemaphoreCreateBinary();
-    assert(device_disconnected_sem);
     syslog.information.printf("USB: Installing USB Host\n");
     const usb_host_config_t host_config = {
         .skip_phy_setup = false,
@@ -142,9 +119,7 @@ static void run_usb(void) {
     BaseType_t task_created;
     task_created = xTaskCreate(usb_lib_task, "usb_lib", 4096, xTaskGetCurrentTaskHandle(), USB_HOST_PRIORITY, &usb_lib_task_hdl);
     assert(task_created == pdTRUE);
-    // ulTaskNotifyTake(false, 1000); // Wait until the USB host library is installed
-
-    vTaskDelay(100); // Add a short delay to let the tasks run
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     syslog.information.printf("USB: Installing CDC-ACM driver\n");
     cdc_acm_host_driver_config_t cdc_config = {
@@ -154,18 +129,15 @@ static void run_usb(void) {
         .new_dev_cb = cdc_acm_device_event_cb,
     };
     ESP_ERROR_CHECK(cdc_acm_host_install(&cdc_config));
-
-    vTaskDelay(100); // Add a short delay to let the tasks run
-
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     syslog.information.printf("USB: Opening serial\n");
     esp_err_t err = cdc_acm_host_open(CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, 0, &dev_config, &cdc_dev);
     if (ESP_OK != err) {
-        syslog.error.println("USB: Failed to open device");
-        // ???
+        syslog.error.printf("USB: Failed to open device: %s\n", esp_err_to_name(err));
+        return;
     }
     vTaskDelay(pdMS_TO_TICKS(100));
-
 
     syslog.information.printf("USB: Setting up line coding\n");
 
@@ -202,94 +174,55 @@ static void run_usb(void) {
         0,
         NULL);
 
-    syslog.information.printf("USB: GO\n");
-
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    syslog.information.printf("USB: ON\n");
 }
 
-
-
 void led_task(void *param) {
-  while (1) {
-    static uint8_t hue = 0;
-    if (isWiFiConnected) {
-      leds = CHSV(hue++, 0XFF, 100);
-    } else {
-      leds = CRGB::Black;
+    while (1) {
+        static uint8_t hue = 0;
+        if (isWiFiConnected) {
+            leds = CHSV(hue++, 0XFF, 100);
+        } else {
+            leds = CRGB::Black;
+        }
+        FastLED.show();
+        delay(50);
     }
-    FastLED.show();
-    delay(50);
-  }
 }
 
 void WiFiEvent(WiFiEvent_t event) {
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      isWiFiConnected = true;
-      break;
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      isWiFiConnected = false;
-      break;
-    default: break;
-  }
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            syslog.information.printf("WiFI: ON\n");
+            isWiFiConnected = true;
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            isWiFiConnected = false;
+            break;
+        default: break;
+    }
 }
 
 void connectToWiFi(const char *ssid, const char *pwd) {
-  WiFi.disconnect(true);
-  WiFi.onEvent(WiFiEvent);
-  WiFi.begin(ssid, pwd);
-}
-
-#if !CONFIG_AUTOSTART_ARDUINO
-void arduinoTask(void *pvParameter) {
-    FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
-    xTaskCreatePinnedToCore(led_task, "led_task", 1024, NULL, 1, NULL, 0);
-
-    connectToWiFi(networkSSID, networkPswd);
-    syslog.forward_to = nullptr;
-    syslog.host = CONFIG_SYSLOG_TAG;
-    syslog.server = CONFIG_SYSLOG_SERVER;
-
-    delay(500);
-
-    run_usb();
-
-    while(1) {
-        delay(10);
-    }
+    WiFi.disconnect(true);
+    WiFi.onEvent(WiFiEvent);
+    WiFi.begin(ssid, pwd);
 }
 
 extern "C" void app_main() {
     initArduino();
 
-    xTaskCreate(&arduinoTask, "arduino_task", configMINIMAL_STACK_SIZE, NULL, 5, NULL);
-}
-#else
+    FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
+    xTaskCreatePinnedToCore(led_task, "led_task", 1024, NULL, 1, NULL, 0);
 
-void setup() {
-  FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
-  xTaskCreatePinnedToCore(led_task, "led_task", 1024, NULL, 1, NULL, 0);
-
-  connectToWiFi(networkSSID, networkPswd);
-  syslog.forward_to = nullptr;
-  syslog.host = CONFIG_SYSLOG_TAG;
-  syslog.server = CONFIG_SYSLOG_SERVER;
- 
-  delay(500);
-}
-
-void loop() {
-    delay(300);
+    connectToWiFi(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD);
+    syslog.forward_to = nullptr;
+    syslog.host = CONFIG_SYSLOG_TAG;
+    syslog.server = CONFIG_SYSLOG_SERVER;
 
     while (!isWiFiConnected) {
-        delay(100);
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     run_usb();
 }
-#endif
-
-
-
