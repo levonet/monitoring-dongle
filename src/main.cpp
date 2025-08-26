@@ -1,20 +1,20 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include <PicoSyslog.h>
-#include <FastLED.h>
-
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_err.h"
+#include "nvs_flash.h"
 
+#include "PicoSyslog.h"
+#include "FastLED.h"
 #include "usb/usb_host.h"
 #include "usb/cdc_acm_host.h"
 
 #include "hw_config.h"
+#include "wifi_station.h"
 #include "info_helper.h"
 
 CRGB leds;
@@ -38,11 +38,18 @@ const cdc_acm_host_device_config_t dev_config = {
 };
 
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
-    char output[512];
+    char *output;
+
+    output = (char *)malloc(sizeof(char) * (data_len + 1));
     strncpy(output, (const char *)data, data_len);
     output[data_len] = '\0';
 
     syslog.information.printf("%s\n", rtrim(output));
+    free(output);
+    output = NULL;
+
+    leds = CRGB::DarkOrange;
+    FastLED.show();
 
     return true;
 }
@@ -178,51 +185,45 @@ static void run_usb(void) {
 }
 
 void led_task(void *param) {
+    bool blink = true;
     while (1) {
-        static uint8_t hue = 0;
+        blink = !blink;
         if (isWiFiConnected) {
-            leds = CHSV(hue++, 0XFF, 100);
+            leds = CRGB::DarkGreen;
         } else {
-            leds = CRGB::Black;
+            leds = blink ? CRGB::DarkRed : CRGB::Black;
         }
         FastLED.show();
-        delay(50);
+        vTaskDelay(pdMS_TO_TICKS(150));
     }
 }
 
-void WiFiEvent(WiFiEvent_t event) {
-    switch (event) {
-        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-            syslog.information.printf("WiFI: ON\n");
-            isWiFiConnected = true;
-            break;
-        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-            isWiFiConnected = false;
-            break;
-        default: break;
-    }
-}
+void wifi_connected_cb(void) {
+    syslog.information.printf("WiFI: ON\n");
+    isWiFiConnected = true;
 
-void connectToWiFi(const char *ssid, const char *pwd) {
-    WiFi.disconnect(true);
-    WiFi.onEvent(WiFiEvent);
-    WiFi.begin(ssid, pwd);
-}
-
-extern "C" void app_main() {
-    initArduino();
-
-    FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
-    xTaskCreatePinnedToCore(led_task, "led_task", 1024, NULL, 1, NULL, 0);
-
-    connectToWiFi(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD);
     syslog.forward_to = nullptr;
     syslog.host = CONFIG_SYSLOG_TAG;
     syslog.server = CONFIG_SYSLOG_SERVER;
 
-    while (!isWiFiConnected) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-
     run_usb();
+}
+
+void wifi_disconnected_cb(void) {
+    isWiFiConnected = false;
+}
+
+extern "C" void app_main() {
+    //Initialize NVS for WiFi
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
+    xTaskCreatePinnedToCore(led_task, "led_task", 1024, NULL, 1, NULL, 0);
+
+    wifi_init_sta(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, wifi_connected_cb, wifi_disconnected_cb);
 }
