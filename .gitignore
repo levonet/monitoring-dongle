@@ -3,7 +3,7 @@
 .DS_Store
 .pio
 README
-secrets.ini
+sensitive.ini
 sdkconfig.*
 !sdkconfig.defaults
 managed_components/

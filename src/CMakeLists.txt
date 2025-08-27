@@ -1,5 +1,6 @@
 list(APPEND srcs "main.cpp"
                  "info_helper.cpp"
+                 "lgfx_dongle.cpp"
                  "wifi_station.cpp"
                  )
 

@@ -2,27 +2,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_system.h"
-#include "esp_err.h"
-#include "nvs_flash.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_system.h>
+#include <esp_timer.h>
+#include <esp_err.h>
 
+#include "nvs_flash.h"
 #include "PicoSyslog.h"
 #include "FastLED.h"
 #include "usb/usb_host.h"
 #include "usb/cdc_acm_host.h"
 
 #include "hw_config.h"
+#include "lgfx_dongle.h"
 #include "wifi_station.h"
 #include "info_helper.h"
 
 CRGB leds;
-
+static LGFX_Dongle lcd;
 PicoSyslog::Logger syslog("dongle");
 
 boolean isWiFiConnected = false;
-
+static int64_t shineTime = 0;
 static cdc_acm_dev_hdl_t cdc_dev = NULL;
 
 static bool handle_rx(const uint8_t *data, size_t data_len, void *arg);
@@ -50,6 +52,7 @@ static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
 
     leds = CRGB::DarkOrange;
     FastLED.show();
+    shineTime = esp_timer_get_time() + 200000; // 200ms for flashing
 
     return true;
 }
@@ -102,14 +105,12 @@ static void usb_lib_task(void *arg) {
     uint32_t event_flags;
 
     while (1) {
-        // Start handling system events
         usb_host_lib_handle_events(portMAX_DELAY, &event_flags);
         if (event_flags & USB_HOST_LIB_EVENT_FLAGS_NO_CLIENTS) {
             ESP_ERROR_CHECK(usb_host_device_free_all());
         }
         if (event_flags & USB_HOST_LIB_EVENT_FLAGS_ALL_FREE) {
             syslog.information.printf("USB: All devices freed\n");
-            // Continue handling USB events to allow device reconnection
         }
     }
 }
@@ -189,12 +190,14 @@ void led_task(void *param) {
     while (1) {
         blink = !blink;
         if (isWiFiConnected) {
-            leds = CRGB::DarkGreen;
+            if (shineTime < esp_timer_get_time()) {
+                leds = CRGB::DarkGreen;
+            }
         } else {
             leds = blink ? CRGB::DarkRed : CRGB::Black;
         }
         FastLED.show();
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(95));
     }
 }
 
@@ -223,7 +226,18 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(ret);
 
     FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
+    FastLED.setBrightness(64);
     xTaskCreatePinnedToCore(led_task, "led_task", 1024, NULL, 1, NULL, 0);
+
+    if (!lcd.init()) {
+        return;
+    }
+    lcd.setBrightness(96);
+    lcd.setTextColor(0x00ff00u);
+    lcd.setCursor(2,12);
+    lcd.printf("SSID: %s", CONFIG_ESP_WIFI_SSID);
+    lcd.setCursor(2,24);
+    lcd.printf(" TAG: %s", CONFIG_SYSLOG_TAG);
 
     wifi_init_sta(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, wifi_connected_cb, wifi_disconnected_cb);
 }
