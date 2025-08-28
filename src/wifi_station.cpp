@@ -56,8 +56,8 @@ void wifi_init_sta(const char *ssid, const char *password, wifi_cb_t callback_co
     wifi_config_t wifi_config = {
         .sta = {},
     };
-    strncpy((char*)wifi_config.sta.ssid, ssid, 32);
-    strncpy((char*)wifi_config.sta.password, password, 64);
+    strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid), ssid, 32);
+    strncpy(reinterpret_cast<char*>(wifi_config.sta.password), password, 64);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));

@@ -18,12 +18,14 @@
 #include "lgfx_dongle.h"
 #include "wifi_station.h"
 #include "info_helper.h"
+#include "serializer.h"
 
 CRGB leds;
 static LGFX_Dongle lcd;
 PicoSyslog::Logger syslog("dongle");
 
 boolean isWiFiConnected = false;
+boolean isUSBConnected = false;
 static int64_t shineTime = 0;
 static cdc_acm_dev_hdl_t cdc_dev = NULL;
 
@@ -31,9 +33,9 @@ static bool handle_rx(const uint8_t *data, size_t data_len, void *arg);
 static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx);
 
 const cdc_acm_host_device_config_t dev_config = {
-    .connection_timeout_ms = 5000, // 5 seconds, enough time to plug the device in or experiment with timeout
+    .connection_timeout_ms = 5000, // 5 seconds, enough time to plug the device
     .out_buffer_size = 512,
-    .in_buffer_size = 512,
+    .in_buffer_size = 1400,        // Safe RSyslog UDP payload size
     .event_cb = handle_event,
     .data_cb = handle_rx,
     .user_arg = NULL,
@@ -116,6 +118,11 @@ static void usb_lib_task(void *arg) {
 }
 
 static void run_usb(void) {
+    if (isUSBConnected) {
+        syslog.information.printf("USB: USB has already been connected\n");
+        return;
+    }
+
     syslog.information.printf("USB: Installing USB Host\n");
     const usb_host_config_t host_config = {
         .skip_phy_setup = false,
@@ -182,6 +189,7 @@ static void run_usb(void) {
         0,
         NULL);
 
+    isUSBConnected = true;
     syslog.information.printf("USB: ON\n");
 }
 
