@@ -48,7 +48,20 @@ static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
     strncpy(output, (const char *)data, data_len);
     output[data_len] = '\0';
 
-    syslog.information.printf("%s\n", rtrim(output));
+    char *line = output;
+    char *line_next;
+    size_t line_len = data_len;
+    do {
+        line_next = nextln(line, line_len);
+
+        syslog.information.printf("%s\n", rtrim(line));
+
+        if (line_next != NULL) {
+            line_len -= line_next - line;
+        }
+        line = line_next;
+    } while (line_next != NULL);
+
     free(output);
     output = NULL;
 
