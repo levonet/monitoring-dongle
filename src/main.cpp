@@ -35,7 +35,7 @@ static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_
 const cdc_acm_host_device_config_t dev_config = {
     .connection_timeout_ms = 5000, // 5 seconds, enough time to plug the device
     .out_buffer_size = 512,
-    .in_buffer_size = 1400,        // Safe RSyslog UDP payload size
+    .in_buffer_size = 1024,        // The maximum packet size for SuperSpeed USB
     .event_cb = handle_event,
     .data_cb = handle_rx,
     .user_arg = NULL,
@@ -54,7 +54,9 @@ static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
     do {
         line_next = nextln(line, line_len);
 
-        syslog.information.printf("%s\n", rtrim(line));
+        if (not_empty(line)) {
+            syslog.information.printf("%s\n", rtrim(line));
+        }
 
         if (line_next != NULL) {
             line_len -= line_next - line;
@@ -229,6 +231,9 @@ void wifi_connected_cb(void) {
     syslog.forward_to = nullptr;
     syslog.host = CONFIG_SYSLOG_TAG;
     syslog.server = CONFIG_SYSLOG_SERVER;
+#ifdef CONFIG_SYSLOG_PORT
+    syslog.port = CONFIG_SYSLOG_PORT;
+#endif
 
     run_usb();
 }

@@ -2,11 +2,26 @@
 #include <ctype.h>
 #include <string.h>
 
-char *rtrim(char *s) {
-    char *back = s + strlen(s);
+char *rtrim(char *str) {
+    char *back = str + strlen(str);
     while (isspace(*--back));
     *(back + 1) = '\0';
-    return s;
+    return str;
+}
+
+bool not_empty(const char *str) {
+    if (str == NULL) {
+        return false;
+    }
+
+    while (*str != '\0') {
+        if (!isspace(*str)) {
+            return true;
+        }
+        str++;
+    }
+
+    return false;
 }
 
 bool is_ordinary_char(const char exclusion[], size_t exclusion_size, char c) {
@@ -34,7 +49,7 @@ char *nextln(char *data, size_t data_len) {
     while (--cur > 0 && !is_ordinary_char(exclusion, exclusion_size, *++forward));
     if (cur <= 0) {
         return NULL;
-    } 
+    }
 
     return forward;
 }
