@@ -10,6 +10,13 @@ dependencies:
     source:
       type: idf
     version: 4.4.7
-manifest_hash: 978490a9ee0dbb5e8f40fe5913d1931914010ca82f27b5cfa4d40d73c3034817
+  unclerus_esp_idf_lib_button:
+    component_hash: d90a4e54d2df802a94e5a87199818077a2706b9e96ca5f22bdd8f646443af828
+    source:
+      git: https://github.com/UncleRus/esp-idf-lib.git
+      path: components/button
+      type: git
+    version: e8fff9a2d638ce08716b69fa66382bbfa0bfffdf
+manifest_hash: ced236b3adbc0f0d867616c0d42570689f651c9ddc7b02d0d715a87097e703b0
 target: esp32s3
 version: 1.0.0

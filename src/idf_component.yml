@@ -1,3 +1,7 @@
 dependencies:
   usb_host_cdc_acm: "2.*"
   idf: ">=4.4"
+  unclerus_esp_idf_lib_button:
+    git: https://github.com/UncleRus/esp-idf-lib.git
+    path: components/button
+    version: "0.9.4"

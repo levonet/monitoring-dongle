@@ -71,10 +71,16 @@ TEST_SUITE("nextln()") {
         CHECK(!strcmp("012", sample1));
         CHECK(!strcmp("345", sample2));
     }
+    TEST_CASE("Lost tail") {
+        char sample1[] = "$Hostname=fluidnc001-1\n[echo: $H";
+        size_t len1 = 32;
+        char *sample2 = nextln(sample1, len1);
+        CHECK(!strcmp("$Hostname=fluidnc001-1", sample1));
+        CHECK(!strcmp("[echo: $H", sample2));
+    }
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     doctest::Context context;
 
     context.setOption("success", true);     // Report successful tests

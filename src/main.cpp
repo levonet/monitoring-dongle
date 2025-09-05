@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/timers.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_err.h>
@@ -13,16 +14,21 @@
 #include "FastLED.h"
 #include "usb/usb_host.h"
 #include "usb/cdc_acm_host.h"
+#include "button.h"
 
 #include "hw_config.h"
 #include "lgfx_dongle.h"
 #include "wifi_station.h"
 #include "info_helper.h"
 #include "serializer.h"
+#include "ring_buffer.h"
 
 CRGB leds;
 static LGFX_Dongle lcd;
 PicoSyslog::Logger syslog("dongle");
+static button_t btn;
+TimerHandle_t getNameTimer;
+ring_buffer_t rxbuf;
 
 boolean isWiFiConnected = false;
 boolean isUSBConnected = false;
@@ -50,7 +56,7 @@ static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
 
     char *line = output;
     char *line_next;
-    size_t line_len = data_len;
+    size_t line_len = data_len + 1;
     do {
         line_next = nextln(line, line_len);
 
@@ -242,6 +248,39 @@ void wifi_disconnected_cb(void) {
     isWiFiConnected = false;
 }
 
+static void handle_button(button_t *btn, button_state_t state) {
+    switch (state) {
+        case BUTTON_CLICKED: {
+                if (!isUSBConnected) {
+                    break;
+                }
+                if (xTimerIsTimerActive(getNameTimer) == pdTRUE) {
+                    break;
+                }
+
+                xTimerStart(getNameTimer, 0);
+
+                const uint8_t msg_name[] = "$Config/Filename\n";
+                cdc_acm_host_data_tx_blocking(cdc_dev, msg_name, sizeof(msg_name), 500);
+                // TODO: Erase TAG name from display
+
+                break;
+            }
+        case BUTTON_PRESSED_LONG: {
+                const uint8_t msg_unlock[] = "$Alarm/Disable\n";
+                cdc_acm_host_data_tx_blocking(cdc_dev, msg_unlock, sizeof(msg_unlock), 500);
+                break;
+            }
+        default:
+            break;
+    }
+}
+
+static void  handle_timer_get_name(TimerHandle_t xTimer) {
+    // TODO: Return old TAG name (syslog.host) to display
+    syslog.information.printf("TIMER: cb\n");
+}
+
 extern "C" void app_main() {
     //Initialize NVS for WiFi
     esp_err_t ret = nvs_flash_init();
@@ -250,6 +289,11 @@ extern "C" void app_main() {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, handle_timer_get_name);
+    if (getNameTimer == NULL) {
+        return;
+    }
 
     FastLED.addLeds<APA102, LED_DI_PIN, LED_CI_PIN, BGR>(&leds, 1);
     FastLED.setBrightness(64);
@@ -264,6 +308,15 @@ extern "C" void app_main() {
     lcd.printf("SSID: %s", CONFIG_ESP_WIFI_SSID);
     lcd.setCursor(2,24);
     lcd.printf(" TAG: %s", CONFIG_SYSLOG_TAG);
+
+    btn.gpio = BTN_PIN;
+    btn.pressed_level = 0;
+    btn.internal_pull = true;
+    btn.autorepeat = false;
+    btn.callback = handle_button;
+    ESP_ERROR_CHECK(button_init(&btn));
+
+    ring_buffer_init(&rxbuf);
 
     wifi_init_sta(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, wifi_connected_cb, wifi_disconnected_cb);
 }
