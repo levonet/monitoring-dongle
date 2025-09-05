@@ -1,20 +1,22 @@
 #pragma once
 
-#if !defined(RING_BUFFER_SIZE)
-#define RING_BUFFER_SIZE 64
-#endif
-
-typedef struct ring_buffer_s ring_buffer_t;
-typedef uint16_t ring_buffer_index_t;
-
-struct ring_buffer_s {
-    unsigned char buffer[RING_BUFFER_SIZE];
-    ring_buffer_index_t head;
-    ring_buffer_index_t tail;
-};
+typedef struct ring_buffer_s {
+    unsigned char *buffer;
+    size_t buffer_len;
+    uint16_t head;
+    uint16_t tail;
+} ring_buffer_t;
 
 
-void ring_buffer_init(ring_buffer_t *buf);
+/*
+ * NOTE: Buffer size must have a "power of 2" length.
+ */
+void ring_buffer_init(ring_buffer_t *buf, size_t buf_len);
+void ring_buffer_delete(ring_buffer_t *buf);
 uint16_t ring_buffer_available(ring_buffer_t *buf);
 int16_t ring_buffer_read(ring_buffer_t *buf);
 void ring_buffer_append(ring_buffer_t *buf, unsigned char c);
+
+// For testing only
+int16_t ring_buffer_head(ring_buffer_t *buf);
+int16_t ring_buffer_tail(ring_buffer_t *buf);

@@ -1,35 +1,47 @@
 #include <cstdint>
+#include <stdlib.h>
+
 #include "ring_buffer.h"
 
-void ring_buffer_init(ring_buffer_t *buf) {
+void ring_buffer_init(ring_buffer_t *buf, size_t buf_len) {
+    buf->buffer = (unsigned char *)malloc(sizeof(char) * buf_len);
+    buf->buffer_len = buf_len;
     buf->head = 0;
     buf->tail = 0;
 }
 
+void ring_buffer_delete(ring_buffer_t *buf) {
+    free(buf->buffer);
+    buf->buffer = NULL;
+}
+
 uint16_t ring_buffer_available(ring_buffer_t *buf) {
-    return ((uint16_t)(RING_BUFFER_SIZE + buf->head - buf->tail)) % RING_BUFFER_SIZE;
+    return ((uint16_t)(buf->buffer_len + buf->head - buf->tail)) % buf->buffer_len;
 }
 
 int16_t ring_buffer_read(ring_buffer_t *buf) {
-    // if the head isn't ahead of the tail, we don't have any characters
     if (buf->head == buf->tail) {
         return -1;
     } else {
         unsigned char c = buf->buffer[buf->tail];
-        buf->tail = (ring_buffer_index_t)(buf->tail + 1) % RING_BUFFER_SIZE;
+        buf->tail = (uint16_t)((buf->tail + 1) % buf->buffer_len);
         return c;
     }
 }
 
 void ring_buffer_append(ring_buffer_t *buf, unsigned char c) {
-    ring_buffer_index_t i = (unsigned int)(buf->head + 1) % RING_BUFFER_SIZE;
+    uint16_t i = (buf->head + 1) % buf->buffer_len;
 
-    // if we should be storing the received character into the location
-    // just before the tail (meaning that the head would advance to the
-    // current location of the tail), we're about to overflow the buffer
-    // and so we don't write the character or advance the head.
     if (i != buf->tail) {
       buf->buffer[buf->head] = c;
       buf->head = i;
     }
+}
+
+int16_t ring_buffer_head(ring_buffer_t *buf) {
+    return buf->head;
+}
+
+int16_t ring_buffer_tail(ring_buffer_t *buf) {
+    return buf->tail;
 }

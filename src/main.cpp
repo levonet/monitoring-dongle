@@ -23,11 +23,14 @@
 #include "serializer.h"
 #include "ring_buffer.h"
 
+#define RX_RING_BUFFER 4096
+
 CRGB leds;
 static LGFX_Dongle lcd;
 PicoSyslog::Logger syslog("dongle");
 static button_t btn;
 TimerHandle_t getNameTimer;
+TimerHandle_t rxTimer;
 ring_buffer_t rxbuf;
 
 boolean isWiFiConnected = false;
@@ -35,31 +38,79 @@ boolean isUSBConnected = false;
 static int64_t shineTime = 0;
 static cdc_acm_dev_hdl_t cdc_dev = NULL;
 
-static bool handle_rx(const uint8_t *data, size_t data_len, void *arg);
-static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx);
+static bool handle_cdc_rx(const uint8_t *data, size_t data_len, void *arg);
+static void handle_cdc_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx);
 
 const cdc_acm_host_device_config_t dev_config = {
     .connection_timeout_ms = 5000, // 5 seconds, enough time to plug the device
     .out_buffer_size = 512,
     .in_buffer_size = 1024,        // The maximum packet size for SuperSpeed USB
-    .event_cb = handle_event,
-    .data_cb = handle_rx,
+    .event_cb = handle_cdc_event,
+    .data_cb = handle_cdc_rx,
     .user_arg = NULL,
 };
 
-static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
-    char *output;
+// void line_transmit(unsigned char* line) {
+//     if (not_empty(line)) {
+//         return;
+//     }
 
-    output = (char *)malloc(sizeof(char) * (data_len + 1));
-    strncpy(output, (const char *)data, data_len);
+//     syslog.information.printf("%s\n", rtrim(line));
+
+//     if (xTimerIsTimerActive(getNameTimer) == pdFALSE) {
+//         return;
+//     }
+
+//     const char target[] = "$Config/Filename=";
+//     const char suffix[] = ".yaml";
+//     if (strncmp((const char*)line, target, strlen(target)) != 0) {
+//         return;
+//     }
+
+//     char *tagName = (char*)line + strlen(target);
+//     int shift = strlen(tagName) - strlen(suffix);
+//     if (strcmp((const char*)tagName + shift, suffix) == 0) {
+//         tagName[shift] = '\0';
+//         syslog.host = tagName;
+//     }
+// }
+
+static bool handle_cdc_rx(const uint8_t *data, size_t data_len, void *arg) {
+    uint16_t i = 0;
+
+    xTimerStop(rxTimer, 0);
+
+    do {
+        ring_buffer_append(&rxbuf, (unsigned char)data[i]);
+    } while (++i < data_len);
+
+    xTimerStart(rxTimer, 0);
+
+    return true;
+}
+
+void handle_rx_logger(TimerHandle_t xTimer) {
+    unsigned char *output;
+    uint16_t i = 0;
+
+    uint16_t data_len = ring_buffer_available(&rxbuf);
+    if (!data_len) {
+        return;
+    }
+
+    output = (unsigned char *)malloc(sizeof(char) * (data_len + 1));
+    do {
+        output[i] = ring_buffer_read(&rxbuf);
+    } while (++i < data_len);
     output[data_len] = '\0';
 
-    char *line = output;
-    char *line_next;
+    unsigned char *line = output;
+    unsigned char *line_next;
     size_t line_len = data_len + 1;
     do {
         line_next = nextln(line, line_len);
 
+        // line_transmit(line);
         if (not_empty(line)) {
             syslog.information.printf("%s\n", rtrim(line));
         }
@@ -76,11 +127,9 @@ static bool handle_rx(const uint8_t *data, size_t data_len, void *arg) {
     leds = CRGB::DarkOrange;
     FastLED.show();
     shineTime = esp_timer_get_time() + 200000; // 200ms for flashing
-
-    return true;
 }
 
-static void handle_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx) {
+static void handle_cdc_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx) {
     switch (event->type) {
         case CDC_ACM_HOST_ERROR:
             syslog.error.printf("USB: CDC-ACM error has occurred, err_no = %i\n", event->data.error);
@@ -276,7 +325,7 @@ static void handle_button(button_t *btn, button_state_t state) {
     }
 }
 
-static void  handle_timer_get_name(TimerHandle_t xTimer) {
+static void handle_timer_get_name(TimerHandle_t xTimer) {
     // TODO: Return old TAG name (syslog.host) to display
     syslog.information.printf("TIMER: cb\n");
 }
@@ -290,8 +339,12 @@ extern "C" void app_main() {
     }
     ESP_ERROR_CHECK(ret);
 
-    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, handle_timer_get_name);
+    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(1000), pdFALSE, (void *)0, handle_timer_get_name);
     if (getNameTimer == NULL) {
+        return;
+    }
+    rxTimer = xTimerCreate("rxTimer", pdMS_TO_TICKS(15), pdFALSE, (void *)0, handle_rx_logger);
+    if (rxTimer == NULL) {
         return;
     }
 
@@ -316,7 +369,7 @@ extern "C" void app_main() {
     btn.callback = handle_button;
     ESP_ERROR_CHECK(button_init(&btn));
 
-    ring_buffer_init(&rxbuf);
+    ring_buffer_init(&rxbuf, RX_RING_BUFFER);
 
     wifi_init_sta(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, wifi_connected_cb, wifi_disconnected_cb);
 }
