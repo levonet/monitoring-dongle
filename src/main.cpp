@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <regex.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/timers.h>
@@ -23,6 +24,8 @@
 #include "serializer.h"
 #include "ring_buffer.h"
 
+#define ARRAY_SIZE(arr) (sizeof((arr)) / sizeof((arr)[0]))
+
 #define RX_RING_BUFFER 4096
 
 CRGB leds;
@@ -32,11 +35,16 @@ static button_t btn;
 TimerHandle_t getNameTimer;
 TimerHandle_t rxTimer;
 ring_buffer_t rxbuf;
+regex_t regex;
+int reti;
+nvs_handle_t hdlNvs;
 
 boolean isWiFiConnected = false;
 boolean isUSBConnected = false;
 static int64_t shineTime = 0;
 static cdc_acm_dev_hdl_t cdc_dev = NULL;
+static char tag_name_rx[64];
+static char tag_name_nvs[64];
 
 static bool handle_cdc_rx(const uint8_t *data, size_t data_len, void *arg);
 static void handle_cdc_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx);
@@ -50,30 +58,52 @@ const cdc_acm_host_device_config_t dev_config = {
     .user_arg = NULL,
 };
 
-// void line_transmit(unsigned char* line) {
-//     if (not_empty(line)) {
-//         return;
-//     }
+const char *nvsGetKey(const char *key, char *value, const char *defaultVal) {
+    size_t required_size = 0;
+    esp_err_t err = nvs_get_str(hdlNvs, key, NULL, &required_size);
+    if (err != ESP_OK) {
+        return defaultVal;
+    }
 
-//     syslog.information.printf("%s\n", rtrim(line));
+    err = nvs_get_str(hdlNvs, key, value, &required_size);
+    if (err == ESP_OK) {
+        return value;
+    }
 
-//     if (xTimerIsTimerActive(getNameTimer) == pdFALSE) {
-//         return;
-//     }
+    return defaultVal;
+}
 
-//     const char target[] = "$Config/Filename=";
-//     const char suffix[] = ".yaml";
-//     if (strncmp((const char*)line, target, strlen(target)) != 0) {
-//         return;
-//     }
+static void draw_info(const char* ssid, const char* tag) {
+    lcd.clear();
+    lcd.setCursor(2,12);
+    lcd.printf("SSID: %s", ssid);
+    lcd.setCursor(2,24);
+    lcd.printf(" TAG: %s", tag);
+}
 
-//     char *tagName = (char*)line + strlen(target);
-//     int shift = strlen(tagName) - strlen(suffix);
-//     if (strcmp((const char*)tagName + shift, suffix) == 0) {
-//         tagName[shift] = '\0';
-//         syslog.host = tagName;
-//     }
-// }
+void line_transmit(unsigned char* line) {
+    if (!not_empty(line)) {
+        return;
+    }
+
+    syslog.information.printf("%s\n", rtrim(line));
+
+    if (xTimerIsTimerActive(getNameTimer) == pdFALSE) {
+        return;
+    }
+
+    if (reti) {
+        return;
+    }
+
+    regmatch_t pmatch[2];
+    if (!regexec(&regex, (const char*)line, ARRAY_SIZE(pmatch), pmatch, 0)) {
+        sprintf(tag_name_rx, "%.*s", (int)(pmatch[1].rm_eo - pmatch[1].rm_so), line + pmatch[1].rm_so);
+        syslog.host = tag_name_rx;
+        nvs_set_str(hdlNvs, "dongle_tag_name", tag_name_rx);
+        draw_info(CONFIG_ESP_WIFI_SSID, tag_name_rx);
+    }
+}
 
 static bool handle_cdc_rx(const uint8_t *data, size_t data_len, void *arg) {
     uint16_t i = 0;
@@ -110,10 +140,7 @@ void handle_rx_logger(TimerHandle_t xTimer) {
     do {
         line_next = nextln(line, line_len);
 
-        // line_transmit(line);
-        if (not_empty(line)) {
-            syslog.information.printf("%s\n", rtrim(line));
-        }
+        line_transmit(line);
 
         if (line_next != NULL) {
             line_len -= line_next - line;
@@ -284,7 +311,7 @@ void wifi_connected_cb(void) {
     isWiFiConnected = true;
 
     syslog.forward_to = nullptr;
-    syslog.host = CONFIG_SYSLOG_TAG;
+    syslog.host = nvsGetKey("dongle_tag_name", tag_name_nvs, CONFIG_SYSLOG_TAG);
     syslog.server = CONFIG_SYSLOG_SERVER;
 #ifdef CONFIG_SYSLOG_PORT
     syslog.port = CONFIG_SYSLOG_PORT;
@@ -339,11 +366,16 @@ extern "C" void app_main() {
     }
     ESP_ERROR_CHECK(ret);
 
+    ret = nvs_open("storage", NVS_READWRITE, &hdlNvs);
+    if (ret != ESP_OK) {
+        return;
+    }
+
     getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(1000), pdFALSE, (void *)0, handle_timer_get_name);
     if (getNameTimer == NULL) {
         return;
     }
-    rxTimer = xTimerCreate("rxTimer", pdMS_TO_TICKS(15), pdFALSE, (void *)0, handle_rx_logger);
+    rxTimer = xTimerCreate("rxTimer", pdMS_TO_TICKS(250), pdFALSE, (void *)0, handle_rx_logger);
     if (rxTimer == NULL) {
         return;
     }
@@ -357,10 +389,7 @@ extern "C" void app_main() {
     }
     lcd.setBrightness(96);
     lcd.setTextColor(0x00ff00u);
-    lcd.setCursor(2,12);
-    lcd.printf("SSID: %s", CONFIG_ESP_WIFI_SSID);
-    lcd.setCursor(2,24);
-    lcd.printf(" TAG: %s", CONFIG_SYSLOG_TAG);
+    draw_info(CONFIG_ESP_WIFI_SSID, nvsGetKey("dongle_tag_name", tag_name_nvs, CONFIG_SYSLOG_TAG));
 
     btn.gpio = BTN_PIN;
     btn.pressed_level = 0;
@@ -370,6 +399,7 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(button_init(&btn));
 
     ring_buffer_init(&rxbuf, RX_RING_BUFFER);
+    reti = regcomp(&regex, "\\$Config/Filename=(.*)\\.ya?ml$", REG_EXTENDED);
 
     wifi_init_sta(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, wifi_connected_cb, wifi_disconnected_cb);
 }
