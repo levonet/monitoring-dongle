@@ -18,5 +18,5 @@ int16_t ring_buffer_read(ring_buffer_t *buf);
 void ring_buffer_append(ring_buffer_t *buf, unsigned char c);
 
 // For testing only
-int16_t ring_buffer_head(ring_buffer_t *buf);
-int16_t ring_buffer_tail(ring_buffer_t *buf);
+inline int16_t ring_buffer_head(ring_buffer_t *buf) {return buf->head;}
+inline int16_t ring_buffer_tail(ring_buffer_t *buf) {return buf->tail;}

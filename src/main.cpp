@@ -5,6 +5,7 @@
 #include <regex.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 #include <freertos/timers.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -34,6 +35,7 @@ PicoSyslog::Logger syslog("dongle");
 static button_t btn;
 TimerHandle_t getNameTimer;
 TimerHandle_t rxTimer;
+SemaphoreHandle_t rxSemaphore;
 ring_buffer_t rxbuf;
 regex_t regex;
 int reti;
@@ -92,12 +94,10 @@ void line_transmit(unsigned char* line) {
         return;
     }
 
-    if (reti) {
-        return;
-    }
-
     regmatch_t pmatch[2];
     if (!regexec(&regex, (const char*)line, ARRAY_SIZE(pmatch), pmatch, 0)) {
+        xTimerStop(getNameTimer, 0);
+
         sprintf(tag_name_rx, "%.*s", (int)(pmatch[1].rm_eo - pmatch[1].rm_so), line + pmatch[1].rm_so);
         syslog.host = tag_name_rx;
         nvs_set_str(hdlNvs, "dongle_tag_name", tag_name_rx);
@@ -108,18 +108,25 @@ void line_transmit(unsigned char* line) {
 static bool handle_cdc_rx(const uint8_t *data, size_t data_len, void *arg) {
     uint16_t i = 0;
 
-    xTimerStop(rxTimer, 0);
+    if (xSemaphoreTake(rxSemaphore, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return false; // Received data was NOT processed
+    }
+
+    if (xTimerIsTimerActive(rxTimer) == pdTRUE) {
+        xTimerStop(rxTimer, 0);
+    }
 
     do {
         ring_buffer_append(&rxbuf, (unsigned char)data[i]);
     } while (++i < data_len);
 
+    xSemaphoreGive(rxSemaphore);
     xTimerStart(rxTimer, 0);
 
     return true;
 }
 
-void handle_rx_logger(TimerHandle_t xTimer) {
+void handle_time_rx_logger(TimerHandle_t xTimer) {
     unsigned char *output;
     uint16_t i = 0;
 
@@ -128,11 +135,17 @@ void handle_rx_logger(TimerHandle_t xTimer) {
         return;
     }
 
+    if (xSemaphoreTake(rxSemaphore, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+
     output = (unsigned char *)malloc(sizeof(char) * (data_len + 1));
     do {
         output[i] = ring_buffer_read(&rxbuf);
     } while (++i < data_len);
     output[data_len] = '\0';
+
+    xSemaphoreGive(rxSemaphore);
 
     unsigned char *line = output;
     unsigned char *line_next;
@@ -153,7 +166,7 @@ void handle_rx_logger(TimerHandle_t xTimer) {
 
     leds = CRGB::DarkOrange;
     FastLED.show();
-    shineTime = esp_timer_get_time() + 200000; // 200ms for flashing
+    shineTime = esp_timer_get_time() + 200000; // 200ms of flashing
 }
 
 static void handle_cdc_event(const cdc_acm_host_dev_event_data_t *event, void *user_ctx) {
@@ -326,6 +339,16 @@ void wifi_disconnected_cb(void) {
 
 static void handle_button(button_t *btn, button_state_t state) {
     switch (state) {
+        case BUTTON_PRESSED: {
+                leds = CRGB::White;
+                FastLED.show();
+                shineTime = esp_timer_get_time() + 1000000; // up to 1s of flashing
+                break;
+            }
+        case BUTTON_RELEASED:
+            FastLED.clear();
+            shineTime = esp_timer_get_time() + 200000; // 200ms of darkness
+            break;
         case BUTTON_CLICKED: {
                 if (!isUSBConnected) {
                     break;
@@ -354,7 +377,8 @@ static void handle_button(button_t *btn, button_state_t state) {
 
 static void handle_timer_get_name(TimerHandle_t xTimer) {
     // TODO: Return old TAG name (syslog.host) to display
-    syslog.information.printf("TIMER: cb\n");
+    // syslog.information.printf("TIMER: cb\n");
+    return;
 }
 
 extern "C" void app_main() {
@@ -375,7 +399,7 @@ extern "C" void app_main() {
     if (getNameTimer == NULL) {
         return;
     }
-    rxTimer = xTimerCreate("rxTimer", pdMS_TO_TICKS(250), pdFALSE, (void *)0, handle_rx_logger);
+    rxTimer = xTimerCreate("rxTimer", pdMS_TO_TICKS(250), pdFALSE, (void *)0, handle_time_rx_logger);
     if (rxTimer == NULL) {
         return;
     }
@@ -398,8 +422,17 @@ extern "C" void app_main() {
     btn.callback = handle_button;
     ESP_ERROR_CHECK(button_init(&btn));
 
+    rxSemaphore = xSemaphoreCreateMutex();
+    if (rxSemaphore == NULL) {
+        return;
+    }
+
     ring_buffer_init(&rxbuf, RX_RING_BUFFER);
+
     reti = regcomp(&regex, "\\$Config/Filename=(.*)\\.ya?ml$", REG_EXTENDED);
+    if (reti) {
+        return;
+    }
 
     wifi_init_sta(CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD, wifi_connected_cb, wifi_disconnected_cb);
 }
