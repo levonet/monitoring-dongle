@@ -374,11 +374,9 @@ static void handle_button(button_t *btn, button_state_t state) {
     }
 }
 
-// static void handle_timer_get_name(TimerHandle_t xTimer) {
-//     // TODO: Return old TAG name (syslog.host) to display
-//     // syslog.information.printf("TIMER: cb\n");
-//     return;
-// }
+static void handle_timer_get_name(TimerHandle_t xTimer) {
+    return;
+}
 
 extern "C" void app_main() {
     //Initialize NVS for WiFi
@@ -394,7 +392,7 @@ extern "C" void app_main() {
         return;
     }
 
-    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(1000), pdFALSE, (void *)0, NULL);
+    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(1000), pdFALSE, (void *)0, handle_timer_get_name);
     if (getNameTimer == NULL) {
         return;
     }
