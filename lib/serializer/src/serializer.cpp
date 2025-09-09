@@ -9,19 +9,19 @@ unsigned char *rtrim(unsigned char *str) {
     return str;
 }
 
-bool not_empty(const unsigned char *str) {
+bool is_empty(const unsigned char *str) {
     if (str == NULL) {
-        return false;
+        return true;
     }
 
     while (*str != '\0') {
         if (!isspace(*str)) {
-            return true;
+            return false;
         }
         str++;
     }
 
-    return false;
+    return true;
 }
 
 bool is_ordinary_char(const unsigned char exclusion[], size_t exclusion_size, unsigned char c) {

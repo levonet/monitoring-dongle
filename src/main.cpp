@@ -84,7 +84,7 @@ static void draw_info(const char* ssid, const char* tag) {
 }
 
 void line_transmit(unsigned char* line) {
-    if (!not_empty(line)) {
+    if (is_empty(line)) {
         return;
     }
 
@@ -157,6 +157,7 @@ void handle_time_rx_logger(TimerHandle_t xTimer) {
 
         if (line_next != NULL) {
             line_len -= line_next - line;
+            vTaskDelay(pdMS_TO_TICKS(10)); // Don't ask
         }
         line = line_next;
     } while (line_next != NULL);
@@ -361,8 +362,6 @@ static void handle_button(button_t *btn, button_state_t state) {
 
                 const uint8_t msg_name[] = "$Config/Filename\n";
                 cdc_acm_host_data_tx_blocking(cdc_dev, msg_name, sizeof(msg_name), 500);
-                // TODO: Erase TAG name from display
-
                 break;
             }
         case BUTTON_PRESSED_LONG: {
@@ -375,11 +374,11 @@ static void handle_button(button_t *btn, button_state_t state) {
     }
 }
 
-static void handle_timer_get_name(TimerHandle_t xTimer) {
-    // TODO: Return old TAG name (syslog.host) to display
-    // syslog.information.printf("TIMER: cb\n");
-    return;
-}
+// static void handle_timer_get_name(TimerHandle_t xTimer) {
+//     // TODO: Return old TAG name (syslog.host) to display
+//     // syslog.information.printf("TIMER: cb\n");
+//     return;
+// }
 
 extern "C" void app_main() {
     //Initialize NVS for WiFi
@@ -395,7 +394,7 @@ extern "C" void app_main() {
         return;
     }
 
-    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(1000), pdFALSE, (void *)0, handle_timer_get_name);
+    getNameTimer = xTimerCreate("nameTimer", pdMS_TO_TICKS(1000), pdFALSE, (void *)0, NULL);
     if (getNameTimer == NULL) {
         return;
     }
