@@ -75,12 +75,14 @@ const char *nvsGetKey(const char *key, char *value, const char *defaultVal) {
     return defaultVal;
 }
 
-static void draw_info(const char* ssid, const char* tag) {
+static void draw_info(const char* ssid, const char* server, const char* tag) {
     lcd.clear();
-    lcd.setCursor(2,12);
-    lcd.printf("SSID: %s", ssid);
-    lcd.setCursor(2,24);
-    lcd.printf(" TAG: %s", tag);
+    lcd.setCursor(2, 12);
+    lcd.printf("  SSID: %s", ssid);
+    lcd.setCursor(2, 24);
+    lcd.printf("SYSLOG: %s", server);
+    lcd.setCursor(2, 36);
+    lcd.printf("   TAG: %s", tag);
 }
 
 void line_transmit(unsigned char* line) {
@@ -101,7 +103,7 @@ void line_transmit(unsigned char* line) {
         sprintf(tag_name_rx, "%.*s", (int)(pmatch[1].rm_eo - pmatch[1].rm_so), line + pmatch[1].rm_so);
         syslog.host = tag_name_rx;
         nvs_set_str(hdlNvs, "dongle_tag_name", tag_name_rx);
-        draw_info(CONFIG_ESP_WIFI_SSID, tag_name_rx);
+        draw_info(CONFIG_ESP_WIFI_SSID, CONFIG_SYSLOG_SERVER, tag_name_rx);
     }
 }
 
@@ -410,7 +412,7 @@ extern "C" void app_main() {
     }
     lcd.setBrightness(96);
     lcd.setTextColor(0x00ff00u);
-    draw_info(CONFIG_ESP_WIFI_SSID, nvsGetKey("dongle_tag_name", tag_name_nvs, CONFIG_SYSLOG_TAG));
+    draw_info(CONFIG_ESP_WIFI_SSID, CONFIG_SYSLOG_SERVER, nvsGetKey("dongle_tag_name", tag_name_nvs, CONFIG_SYSLOG_TAG));
 
     btn.gpio = BTN_PIN;
     btn.pressed_level = 0;
