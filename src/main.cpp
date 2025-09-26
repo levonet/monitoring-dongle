@@ -159,7 +159,10 @@ void handle_time_rx_logger(TimerHandle_t xTimer) {
 
         if (line_next != NULL) {
             line_len -= line_next - line;
-            vTaskDelay(pdMS_TO_TICKS(10)); // Don't ask
+            /* TODO: Замінити PicoSyslog на пряму відправку по udp.
+             * Причина: ребутається MCU при послідовному виклику syslog.*.printf().
+             */
+            vTaskDelay(pdMS_TO_TICKS(148)); // Don't ask
         }
         line = line_next;
     } while (line_next != NULL);
