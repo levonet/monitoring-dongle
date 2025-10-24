@@ -307,6 +307,9 @@ static void run_usb(void) {
 
     isUSBConnected = true;
     syslog.information.printf("USB: ON\n");
+
+    const uint8_t msg_init_report[] = "$Report/Interval=10000\n";
+    cdc_acm_host_data_tx_blocking(cdc_dev, msg_init_report, sizeof(msg_init_report), 500);
 }
 
 void led_task(void *param) {
