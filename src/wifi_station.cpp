@@ -16,7 +16,7 @@ static EventGroupHandle_t s_wifi_event_group;
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
-#define WIFI_MAXIMUM_RETRY 5
+#define WIFI_MAXIMUM_RETRY 5000
 
 static int s_retry_num = 0;
 
@@ -25,6 +25,7 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_num < WIFI_MAXIMUM_RETRY) {
+            vTaskDelay(pdMS_TO_TICKS(10000));
             esp_wifi_connect(); // retry to connect to the AP
             s_retry_num++;
         } else {

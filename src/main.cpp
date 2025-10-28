@@ -329,15 +329,15 @@ void led_task(void *param) {
 }
 
 void wifi_connected_cb(void) {
-    syslog.information.printf("WiFI: ON\n");
-    isWiFiConnected = true;
-
     syslog.forward_to = nullptr;
     syslog.host = nvsGetKey("dongle_tag_name", tag_name_nvs, CONFIG_SYSLOG_TAG);
     syslog.server = CONFIG_SYSLOG_SERVER;
 #ifdef CONFIG_SYSLOG_PORT
     syslog.port = CONFIG_SYSLOG_PORT;
 #endif
+
+    isWiFiConnected = true;
+    syslog.information.printf("WiFI: ON\n");
 
     run_usb();
 }
